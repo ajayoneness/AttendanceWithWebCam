@@ -6,6 +6,7 @@ from .views import (
     AttendanceReportAPIView,
     AttendanceExcelExportAPIView,
     AttendancePDFExportAPIView,
+    AttendanceImageUploadAPIView,
 )
 
 urlpatterns = [
@@ -14,4 +15,5 @@ urlpatterns = [
     path('attendance/report/', AttendanceReportAPIView.as_view(), name='attendance-report'),
     path('attendance/export/excel/', AttendanceExcelExportAPIView.as_view(), name='attendance-export-excel'),
     path('attendance/export/pdf/', AttendancePDFExportAPIView.as_view(), name='attendance-export-pdf'),
+    path('attendance/image-upload/', AttendanceImageUploadAPIView.as_view(), name='attendance-export-pdf'),
 ]
