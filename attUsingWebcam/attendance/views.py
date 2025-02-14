@@ -17,9 +17,9 @@ from io import BytesIO
 import openpyxl
 from reportlab.pdfgen import canvas
 import logging
-
-
 import tempfile
+from collections import defaultdict
+
 
 
 logger = logging.getLogger(__name__)
@@ -266,21 +266,137 @@ class AttendanceReportAPIView(APIView):
         serializer = AttendanceSerializer(attendances, many=True)
         return Response(serializer.data)
 
+# class AttendanceExcelExportAPIView(APIView):
+#     def get(self, request, format=None):
+#         attendances = Attendance.objects.all().order_by('date')
+#         workbook = openpyxl.Workbook()
+#         sheet = workbook.active
+#         sheet.title = "Attendance Report"
+#         # Header row.
+#         sheet.append(["Student Name", "Student ID", "Date", "Timestamp"])
+#         for attendance in attendances:
+#             sheet.append([
+#                 attendance.student.name,
+#                 attendance.student.student_id,
+#                 attendance.date.strftime("%Y-%m-%d"),
+#                 attendance.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+#             ])
+#         stream = BytesIO()
+#         workbook.save(stream)
+#         stream.seek(0)
+#         response = HttpResponse(
+#             stream,
+#             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+#         )
+#         response['Content-Disposition'] = 'attachment; filename="attendance_report.xlsx"'
+#         return response
+
+# class AttendancePDFExportAPIView(APIView):
+#     def get(self, request, format=None):
+#         attendances = Attendance.objects.all().order_by('date')
+#         buffer = BytesIO()
+#         p = canvas.Canvas(buffer)
+#         p.setFont("Helvetica", 12)
+#         y = 800
+#         p.drawString(50, y, "Attendance Report")
+#         y -= 30
+#         headers = "Student Name | Student ID | Date | Timestamp"
+#         p.drawString(50, y, headers)
+#         y -= 20
+#         for attendance in attendances:
+#             line = f"{attendance.student.name} | {attendance.student.student_id} | {attendance.date.strftime('%Y-%m-%d')} | {attendance.timestamp.strftime('%H:%M:%S')}"
+#             p.drawString(50, y, line)
+#             y -= 20
+#             if y < 50:
+#                 p.showPage()
+#                 y = 800
+#         p.showPage()
+#         p.save()
+#         buffer.seek(0)
+#         return FileResponse(buffer, as_attachment=True, filename='attendance_report.pdf')
+
+
+
+
+
+
+
 class AttendanceExcelExportAPIView(APIView):
     def get(self, request, format=None):
         attendances = Attendance.objects.all().order_by('date')
+        
+        # Deduplicate entries by student and date
+        unique_entries = {}
+        for attendance in attendances:
+            key = (attendance.student.id, attendance.date)
+            if key not in unique_entries:
+                unique_entries[key] = attendance
+        unique_attendances = list(unique_entries.values())
+        
+        # Calculate attendance statistics
+        unique_dates = {att.date for att in unique_attendances}
+        total_dates = len(unique_dates)
+        
+        # Collect student data
+        student_data = defaultdict(lambda: {
+            'name': None,
+            'student_id': None,
+            'count': 0,
+            'percentage': 0.0
+        })
+        
+        for att in unique_attendances:
+            student = att.student
+            student_data[student.id]['name'] = student.name
+            student_data[student.id]['student_id'] = student.student_id
+            student_data[student.id]['count'] += 1
+        
+        # Calculate percentages
+        for student_id, data in student_data.items():
+            if total_dates > 0:
+                data['percentage'] = (data['count'] / total_dates) * 100
+            else:
+                data['percentage'] = 0.0
+        
+        # Calculate overall average
+        percentages = [data['percentage'] for data in student_data.values()]
+        average_percentage = sum(percentages) / len(percentages) if percentages else 0.0
+        
+        # Generate Excel report
         workbook = openpyxl.Workbook()
         sheet = workbook.active
         sheet.title = "Attendance Report"
-        # Header row.
+        
+        # Main data header
         sheet.append(["Student Name", "Student ID", "Date", "Timestamp"])
-        for attendance in attendances:
+        
+        # Data rows
+        for attendance in unique_attendances:
             sheet.append([
                 attendance.student.name,
                 attendance.student.student_id,
                 attendance.date.strftime("%Y-%m-%d"),
                 attendance.timestamp.strftime("%Y-%m-%d %H:%M:%S")
             ])
+        
+        # Student summary section
+        sheet.append([])
+        sheet.append(["Student Attendance Summary"])
+        sheet.append(["Student Name", "Student ID", "Days Present", "Attendance Percentage"])
+        
+        for data in student_data.values():
+            sheet.append([
+                data['name'],
+                data['student_id'],
+                data['count'],
+                f"{data['percentage']:.2f}%"
+            ])
+        
+        # Overall average
+        sheet.append([])
+        sheet.append(["Overall Average Attendance Percentage", f"{average_percentage:.2f}%"])
+        
+        # Prepare response
         stream = BytesIO()
         workbook.save(stream)
         stream.seek(0)
@@ -291,30 +407,96 @@ class AttendanceExcelExportAPIView(APIView):
         response['Content-Disposition'] = 'attachment; filename="attendance_report.xlsx"'
         return response
 
+
+
+
 class AttendancePDFExportAPIView(APIView):
     def get(self, request, format=None):
         attendances = Attendance.objects.all().order_by('date')
+        
+        # Deduplicate entries by student and date
+        unique_entries = {}
+        for attendance in attendances:
+            key = (attendance.student.id, attendance.date)
+            if key not in unique_entries:
+                unique_entries[key] = attendance
+        unique_attendances = list(unique_entries.values())
+        
+        # Calculate attendance statistics
+        unique_dates = {att.date for att in unique_attendances}
+        total_dates = len(unique_dates)
+        
+        student_counts = defaultdict(int)
+        for att in unique_attendances:
+            student_counts[att.student.id] += 1
+        
+        # Calculate overall average attendance percentage
+        percentages = []
+        for count in student_counts.values():
+            if total_dates > 0:
+                percentage = (count / total_dates) * 100
+            else:
+                percentage = 0.0
+            percentages.append(percentage)
+        overall_average_percentage = sum(percentages) / len(percentages) if percentages else 0.0
+        
+        # Generate PDF report
         buffer = BytesIO()
         p = canvas.Canvas(buffer)
         p.setFont("Helvetica", 12)
-        y = 800
+        y = 800  # Starting Y position
+        
+        # Header for attendance details
         p.drawString(50, y, "Attendance Report")
         y -= 30
-        headers = "Student Name | Student ID | Date | Timestamp"
-        p.drawString(50, y, headers)
-        y -= 20
-        for attendance in attendances:
-            line = f"{attendance.student.name} | {attendance.student.student_id} | {attendance.date.strftime('%Y-%m-%d')} | {attendance.timestamp.strftime('%H:%M:%S')}"
+        p.drawString(50, y, "Student Name | Student ID | Date | Timestamp")
+        y -= 30
+        
+        # Attendance data rows
+        for attendance in unique_attendances:
+            if y < 50:  # Add new page if needed
+                p.showPage()
+                y = 800
+                p.setFont("Helvetica", 12)
+            
+            line = f"{attendance.student.name} | {attendance.student.student_id} | {attendance.date.strftime('%Y-%m-%d')} | {attendance.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
             p.drawString(50, y, line)
             y -= 20
+        
+        # Display overall average attendance percentage
+        if y < 100:
+            p.showPage()
+            y = 800
+            p.setFont("Helvetica", 12)
+        p.drawString(50, y, f"Overall Average Attendance Percentage: {overall_average_percentage:.2f}%")
+        y -= 30
+        
+        # Individual student averages section header
+        p.drawString(50, y, "Individual Student Averages:")
+        y -= 30
+        p.drawString(50, y, "Student Name | Student ID | Attendance Count | Attendance Percentage")
+        y -= 30
+        
+        # Data rows for individual student averages
+        for student_id, count in student_counts.items():
             if y < 50:
                 p.showPage()
                 y = 800
+                p.setFont("Helvetica", 12)
+            
+            student_name = next(
+                (att.student.name for att in unique_attendances if att.student.id == student_id),
+                "N/A"
+            )
+            student_percentage = (count / total_dates * 100) if total_dates > 0 else 0.0
+            line = f"{student_name} | {student_id} | {count} | {student_percentage:.2f}%"
+            p.drawString(50, y, line)
+            y -= 20
+        
         p.showPage()
         p.save()
         buffer.seek(0)
         return FileResponse(buffer, as_attachment=True, filename='attendance_report.pdf')
-
 
 
 
